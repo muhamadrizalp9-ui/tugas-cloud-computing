@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Voltaic — Manajemen Armada Server Cabang (AWS EC2)</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<!-- ============ LOGIN SCREEN ============ -->
+<section id="loginScreen" class="login-screen">
+  <div class="login-grid">
+    <div class="login-brand">
+      <div class="brand-mark">⚡<span>VOLTAIC</span></div>
+      <h1>Kendalikan server tiap<br>cabang toko elektronik Anda.</h1>
+      <p class="brand-sub">Voltaic menghubungkan langsung ke akun AWS Anda dan memperlakukan setiap instance EC2 sebagai server sebuah cabang toko — nyala, padam, atau tutup permanen dalam satu dasbor.</p>
+      <ul class="brand-points">
+        <li><span>01</span> Sambungkan kredensial AWS Anda</li>
+        <li><span>02</span> Pilih region pusat data cabang</li>
+        <li><span>03</span> Buka, hentikan, atau pantau server cabang</li>
+      </ul>
+      <p class="brand-note">Kredensial hanya disimpan di memori peramban Anda selama sesi berlangsung dan tidak pernah dikirim ke server manapun selain AWS.</p>
+    </div>
+
+    <form id="loginForm" class="login-card" autocomplete="off">
+      <div class="card-tag">SAMBUNGKAN AKUN AWS</div>
+      <label>
+        <span>Access Key ID</span>
+        <input type="text" id="accessKeyId" placeholder="AKIAxxxxxxxxxxxxxxx" required spellcheck="false" />
+      </label>
+      <label>
+        <span>Secret Access Key</span>
+        <input type="password" id="secretAccessKey" placeholder="••••••••••••••••••••" required spellcheck="false" />
+      </label>
+      <div class="field-row">
+        <label>
+          <span>Region</span>
+          <select id="region">
+            <option value="ap-southeast-1">ap-southeast-1 (Singapura)</option>
+            <option value="ap-southeast-3">ap-southeast-3 (Jakarta)</option>
+            <option value="ap-southeast-2">ap-southeast-2 (Sydney)</option>
+            <option value="us-east-1">us-east-1 (N. Virginia)</option>
+            <option value="us-west-2">us-west-2 (Oregon)</option>
+            <option value="eu-west-1">eu-west-1 (Irlandia)</option>
+            <option value="__custom">Region lain…</option>
+          </select>
+        </label>
+        <label id="customRegionWrap" class="hidden">
+          <span>Kode region</span>
+          <input type="text" id="customRegion" placeholder="mis. ap-northeast-1" />
+        </label>
+      </div>
+      <label class="checkbox-row">
+        <input type="checkbox" id="showSessionToken" />
+        <span>Gunakan Session Token (kredensial sementara)</span>
+      </label>
+      <label id="sessionTokenWrap" class="hidden">
+        <span>Session Token</span>
+        <textarea id="sessionToken" rows="2" placeholder="Opsional"></textarea>
+      </label>
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="rememberMe" />
+        <span>Ingat Access Key &amp; Region di perangkat ini (Secret Key tidak pernah disimpan)</span>
+      </label>
+
+      <button type="submit" class="btn btn-primary btn-block" id="loginBtn">
+        <span>Masuk ke Voltaic</span>
+      </button>
+      <p class="login-error hidden" id="loginError"></p>
+      <p class="login-hint">Pastikan IAM user memiliki permission EC2 (lihat manual penggunaan untuk contoh policy minimum).</p>
+    </form>
+  </div>
+</section>
+
+<!-- ============ APP SHELL ============ -->
+<section id="appScreen" class="app-shell hidden">
+
+  <aside class="sidebar">
+    <div class="brand-mark small">⚡<span>VOLTAIC</span></div>
+
+    <div class="sidebar-section-label">Region Aktif</div>
+    <select id="regionSwitcher" class="region-switcher">
+      <option value="ap-southeast-1">ap-southeast-1 (Singapura)</option>
+      <option value="ap-southeast-3">ap-southeast-3 (Jakarta)</option>
+      <option value="ap-southeast-2">ap-southeast-2 (Sydney)</option>
+      <option value="us-east-1">us-east-1 (N. Virginia)</option>
+      <option value="us-west-2">us-west-2 (Oregon)</option>
+      <option value="eu-west-1">eu-west-1 (Irlandia)</option>
+      <option value="__custom">Region lain…</option>
+    </select>
+    <input type="text" id="regionSwitcherCustom" class="region-switcher hidden" placeholder="Kode region" />
+
+    <div class="sidebar-section-label">Status Cabang</div>
+    <div id="statusFilterList" class="bucket-list"><!-- populated by JS --></div>
+
+    <div class="sidebar-spacer"></div>
+
+    <label class="checkbox-row autopoll-row">
+      <input type="checkbox" id="autoRefresh" />
+      <span>Muat ulang otomatis (10 dtk)</span>
+    </label>
+
+    <div class="sidebar-footer">
+      <div class="user-chip">
+        <div class="user-dot"></div>
+        <div>
+          <div class="user-name" id="userKeyLabel">—</div>
+          <div class="user-region" id="userRegionLabel">—</div>
+        </div>
+      </div>
+      <button id="logoutBtn" class="btn btn-ghost btn-small btn-block">Keluar</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="breadcrumb" id="breadcrumb"><!-- populated by JS --></div>
+      <div class="topbar-actions">
+        <div class="search-box">
+          <input type="text" id="searchInput" placeholder="Cari nama cabang / instance ID…" />
+        </div>
+        <button id="refreshBtn" class="btn btn-ghost btn-icon" title="Muat ulang">⟳</button>
+        <button id="launchBtn" class="btn btn-primary">+ Buka Cabang Baru</button>
+      </div>
+    </header>
+
+    <div class="stats-strip" id="statsStrip"><!-- populated by JS --></div>
+
+    <div id="contentGrid" class="content-grid"><!-- populated by JS --></div>
+
+    <div id="emptyState" class="empty-state hidden">
+      <div class="empty-icon">🏬</div>
+      <h3>Belum ada cabang di region ini</h3>
+      <p>Klik "Buka Cabang Baru" untuk menjalankan instance EC2 pertama Anda.</p>
+    </div>
+
+    <div id="loadingState" class="loading-state hidden">
+      <div class="spinner"></div>
+      <p>Memuat data dari EC2…</p>
+    </div>
+  </main>
+</section>
+
+<!-- ============ MODALS ============ -->
+<div id="modalBackdrop" class="modal-backdrop hidden">
+
+  <div id="modalPrompt" class="modal hidden">
+    <div class="modal-tag" id="modalPromptTag">GANTI NAMA</div>
+    <h3 id="modalPromptTitle">Ganti nama cabang</h3>
+    <input type="text" id="modalPromptInput" placeholder="mis. Cabang Kota Kasablanka" />
+    <p class="modal-error hidden" id="modalPromptError"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-close>Batal</button>
+      <button class="btn btn-primary" id="modalPromptConfirm">Simpan</button>
+    </div>
+  </div>
+
+  <div id="modalConfirm" class="modal hidden">
+    <div class="modal-tag danger">KONFIRMASI</div>
+    <h3 id="modalConfirmTitle">Yakin lanjutkan?</h3>
+    <p id="modalConfirmBody" class="modal-body-text"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-close>Batal</button>
+      <button class="btn btn-danger" id="modalConfirmOk">Ya, lanjutkan</button>
+    </div>
+  </div>
+
+  <div id="modalLaunch" class="modal modal-wide hidden">
+    <div class="modal-tag">CABANG BARU</div>
+    <h3>Buka cabang baru (Launch Instance)</h3>
+    <div class="modal-form-grid">
+      <label>
+        <span>Nama Cabang (Tag: Name)</span>
+        <input type="text" id="launchName" placeholder="mis. Cabang Bandung" />
+      </label>
+      <label>
+        <span>AMI ID</span>
+        <input type="text" id="launchAmi" placeholder="ami-xxxxxxxxxxxxxxxxx" />
+      </label>
+      <label>
+        <span>Tipe Instance</span>
+        <select id="launchType">
+          <option value="t2.micro">t2.micro (Free tier)</option>
+          <option value="t3.micro">t3.micro</option>
+          <option value="t2.small">t2.small</option>
+          <option value="t3.small">t3.small</option>
+          <option value="t2.medium">t2.medium</option>
+          <option value="t3.medium">t3.medium</option>
+        </select>
+      </label>
+      <label>
+        <span>Jumlah Instance</span>
+        <input type="number" id="launchCount" value="1" min="1" max="10" />
+      </label>
+      <label>
+        <span>Key Pair (opsional)</span>
+        <input type="text" id="launchKeyPair" placeholder="nama-key-pair" />
+      </label>
+      <label>
+        <span>Security Group ID (opsional)</span>
+        <input type="text" id="launchSg" placeholder="sg-xxxxxxxxxxxxxxxxx" />
+      </label>
+      <label>
+        <span>Subnet ID (opsional)</span>
+        <input type="text" id="launchSubnet" placeholder="subnet-xxxxxxxxxxxxxxxxx" />
+      </label>
+      <label>
+        <span>Ukuran Storage (GiB)</span>
+        <input type="number" id="launchStorage" value="8" min="1" max="1000" />
+      </label>
+    </div>
+    <p class="modal-error hidden" id="modalLaunchError"></p>
+    <p class="login-hint">AMI ID bersifat spesifik per-region. Buka EC2 Console → AMI Catalog pada region aktif untuk menyalin AMI ID yang sesuai (mis. Amazon Linux 2023 / Ubuntu 22.04).</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-close>Batal</button>
+      <button class="btn btn-primary" id="modalLaunchConfirm">Buka Cabang</button>
+    </div>
+  </div>
+
+  <div id="modalDetail" class="modal modal-wide hidden">
+    <button class="modal-close-x" data-close>✕</button>
+    <div class="modal-tag">DETAIL CABANG</div>
+    <h3 id="modalDetailTitle">Instance</h3>
+    <div id="modalDetailBody" class="detail-grid"><!-- populated by JS --></div>
+  </div>
+
+</div>
+
+<div id="toastWrap" class="toast-wrap"></div>
+
+<script src="https://sdk.amazonaws.com/js/aws-sdk-2.1691.0.min.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
